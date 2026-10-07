@@ -1,6 +1,6 @@
 // Service Worker：快取 App 本體，讓 App 可以離線使用。
 // ⚠️ 每次修改任何檔案後，請把 VERSION 加一，使用者才會拿到新版。
-const VERSION = 'v4';
+const VERSION = 'v5';
 const CACHE = `habit-tracker-${VERSION}`;
 const ASSETS = [
   './',
@@ -20,7 +20,10 @@ const ASSETS = [
 
 self.addEventListener('install', (event) => {
   event.waitUntil(
-    caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting()),
+    // cache: 'reload' 繞過瀏覽器的 HTTP 快取（GitHub Pages 會快取 10 分鐘），確保存到的是新版檔案
+    caches.open(CACHE)
+      .then((c) => c.addAll(ASSETS.map((url) => new Request(url, { cache: 'reload' }))))
+      .then(() => self.skipWaiting()),
   );
 });
 

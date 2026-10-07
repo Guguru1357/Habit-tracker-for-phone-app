@@ -583,6 +583,7 @@ function backupFile() {
 }
 
 function renderSettings() {
+  currentVersion().then((v) => { const el = $('#app-version'); if (el) el.textContent = v; });
   const standalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone;
   const canShare = !!navigator.canShare?.({ files: [backupFile()] });
   const t = state.settings.theme;
@@ -613,7 +614,8 @@ function renderSettings() {
       <h2 class="card-title">危險區域</h2>
       <button class="btn danger block" data-reset>清除所有資料</button>
     </article>
-    <p class="muted center">習慣追蹤 · 離線可用 · 資料不會上傳</p>
+    <p class="muted center">習慣追蹤 <span id="app-version"></span> · 離線可用 · 資料不會上傳</p>
+    <button class="btn block" data-check-update>🔄 檢查更新</button>
   `;
 }
 
@@ -624,6 +626,16 @@ function download(file) {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+/** 從快取名稱讀出目前版本，例如 habit-tracker-v5 → v5 */
+async function currentVersion() {
+  try {
+    const keys = await caches.keys();
+    return keys.find((k) => k.startsWith('habit-tracker-'))?.slice('habit-tracker-'.length) || '';
+  } catch {
+    return '';
+  }
 }
 
 // ---------- 路由與事件 ----------
@@ -675,6 +687,16 @@ main.addEventListener('click', async (ev) => {
   } else if ('export' in d) download(backupFile());
   else if ('share' in d) {
     try { await navigator.share({ files: [backupFile()], title: '習慣追蹤備份' }); } catch { /* 使用者取消 */ }
+  } else if ('checkUpdate' in d) {
+    toast('檢查中…');
+    try {
+      const r = await navigator.serviceWorker.getRegistration();
+      await r?.update();
+      if (r?.installing || r?.waiting) toast('發現新版本，下載後會自動重新載入');
+      else toast('已經是最新版本 ' + (await currentVersion()));
+    } catch {
+      toast('無法檢查更新（可能沒有網路）');
+    }
   } else if ('install' in d) {
     deferredInstall.prompt();
     await deferredInstall.userChoice;
@@ -719,7 +741,12 @@ window.addEventListener('storage', () => { state = load(); render(); });
 // ---------- Service Worker ----------
 if ('serviceWorker' in navigator) {
   const hadController = !!navigator.serviceWorker.controller;
-  navigator.serviceWorker.register('./sw.js').catch((e) => console.warn('SW 註冊失敗', e));
+  const reg = navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' });
+  reg.catch((e) => console.warn('SW 註冊失敗', e));
+  // 從主畫面打開的 App 常常是從背景恢復、不會重新載入頁面，所以回到前景時主動檢查新版
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') reg.then((r) => r.update()).catch(() => {});
+  });
   // 新版 SW 接手後自動重新載入一次，套用新版本
   let reloaded = false;
   navigator.serviceWorker.addEventListener('controllerchange', () => {
