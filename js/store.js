@@ -25,7 +25,7 @@ export function defaultState() {
     done: {},
     // workouts[habitId][YYYY-MM-DD] = [{ id, part, machine, weight, sets, reps }]
     workouts: {},
-    settings: { theme: 'auto' },
+    settings: { theme: 'auto', weightUnit: 'kg' },
   };
 }
 
@@ -66,6 +66,7 @@ export function normalizeExercise(e) {
     part,
     machine,
     weight: num(e.weight, 9999),
+    unit: e.unit === 'lb' ? 'lb' : 'kg',
     sets: num(e.sets, 99) && Math.round(num(e.sets, 99)),
     reps: num(e.reps, 999) && Math.round(num(e.reps, 999)),
   };
@@ -99,7 +100,10 @@ export function normalizeState(raw) {
     habits,
     done,
     workouts,
-    settings: { theme: ['auto', 'light', 'dark'].includes(theme) ? theme : 'auto' },
+    settings: {
+      theme: ['auto', 'light', 'dark'].includes(theme) ? theme : 'auto',
+      weightUnit: raw.settings?.weightUnit === 'lb' ? 'lb' : 'kg',
+    },
   };
 }
 

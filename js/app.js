@@ -366,8 +366,10 @@ const PARTS = ['胸', '背', '腿', '肩', '二頭', '三頭', '核心', '有氧
 const wkDialog = $('#workout');
 let wk = null; // { hid, date, editId, form }
 
-const emptyForm = (part = '') => ({ part, machine: '', weight: '', reps: '', sets: '' });
-const toForm = (e) => ({ part: e.part, machine: e.machine, weight: e.weight ?? '', reps: e.reps ?? '', sets: e.sets ?? '' });
+const emptyForm = (part = '') => ({ part, machine: '', weight: '', reps: '', sets: '', unit: state.settings.weightUnit });
+const toForm = (e) => ({ part: e.part, machine: e.machine, weight: e.weight ?? '', reps: e.reps ?? '', sets: e.sets ?? '', unit: e.unit });
+const UNIT_LABEL = { kg: 'kg', lb: 'lb' };
+const toKg = (e) => (e.weight || 0) * (e.unit === 'lb' ? 0.45359237 : 1);
 
 /** 某習慣的所有動作，新的在前：[[日期, 動作], …] */
 function allExercises(hid) {
@@ -377,7 +379,7 @@ function allExercises(hid) {
 
 function exerciseText(e) {
   const bits = [];
-  if (e.weight) bits.push(`${e.weight} kg`);
+  if (e.weight) bits.push(`${e.weight} ${UNIT_LABEL[e.unit]}`);
   if (e.reps) bits.push(`${e.reps} 下`);
   if (e.sets) bits.push(`${e.sets} 組`);
   return bits.join(' × ');
@@ -390,7 +392,7 @@ function openWorkout(hid, date) {
 }
 
 function readWorkoutForm() {
-  for (const k of Object.keys(wk.form)) wk.form[k] = $(`#w-${k}`).value;
+  for (const k of ['part', 'machine', 'weight', 'reps', 'sets']) wk.form[k] = $(`#w-${k}`).value;
 }
 
 /** 選了器材時，帶入上次的重量／次數／組數 */
@@ -399,7 +401,7 @@ function prefillFromLast(machine) {
   if (!last) return;
   const f = wk.form;
   if (!f.part) f.part = last.part;
-  Object.assign(f, { weight: last.weight ?? '', reps: last.reps ?? '', sets: last.sets ?? '' });
+  Object.assign(f, { weight: last.weight ?? '', reps: last.reps ?? '', sets: last.sets ?? '', unit: last.unit });
 }
 
 function drawWorkout() {
@@ -442,7 +444,7 @@ function drawWorkout() {
         <input id="w-machine" value="${esc(f.machine)}" placeholder="例如：胸推機、深蹲架、啞鈴臥推" maxlength="40" autocomplete="off">
       </div>
       <div class="num-row">
-        <label class="field">重量 kg<input id="w-weight" type="number" inputmode="decimal" step="any" min="0" value="${esc(f.weight)}"></label>
+        <label class="field"><span class="unit-head">重量<span class="unit-seg">${['kg', 'lb'].map((u) => `<button type="button" data-unit="${u}" class="${f.unit === u ? 'sel' : ''}">${UNIT_LABEL[u]}</button>`).join('')}</span></span><input id="w-weight" type="number" inputmode="decimal" step="any" min="0" value="${esc(f.weight)}"></label>
         <label class="field">次數<input id="w-reps" type="number" inputmode="numeric" min="0" value="${esc(f.reps)}"></label>
         <label class="field">組數<input id="w-sets" type="number" inputmode="numeric" min="0" value="${esc(f.sets)}"></label>
       </div>
@@ -472,6 +474,10 @@ wkDialog.addEventListener('click', (ev) => {
   } else if (d.exEdit) {
     const e = list.find((x) => x.id === d.exEdit);
     if (e) { wk.editId = e.id; wk.form = toForm(e); }
+  } else if (d.unit) {
+    wk.form.unit = d.unit;
+    state.settings.weightUnit = d.unit; // 記住上次用的單位
+    save(state);
   } else if (d.exDel) {
     const e = list.find((x) => x.id === d.exDel);
     if (!e || !confirm(`刪除「${e.machine || e.part}」？`)) return;
@@ -498,6 +504,7 @@ wkDialog.addEventListener('change', (ev) => {
   prefillFromLast(f.machine.trim());
   // 直接填值、不重畫，避免使用者正在輸入的欄位失去焦點
   for (const k of ['part', 'weight', 'reps', 'sets']) $(`#w-${k}`).value = f[k];
+  document.querySelectorAll('[data-unit]').forEach((btn) => btn.classList.toggle('sel', btn.dataset.unit === f.unit));
 });
 
 $('#workout-form').addEventListener('submit', (ev) => {
@@ -529,8 +536,8 @@ function workoutSummary(h, y, m) {
   const machines = new Map(); // machine -> { last, lastDate, best }
   for (const [k, e] of allExercises(h.id)) {
     if (!e.machine) continue;
-    const r = machines.get(e.machine) || { last: e, lastDate: k, best: 0 };
-    r.best = Math.max(r.best, e.weight || 0);
+    const r = machines.get(e.machine) || { last: e, lastDate: k, best: null };
+    if (e.weight && (!r.best || toKg(e) > toKg(r.best))) r.best = e;
     machines.set(e.machine, r);
   }
   const sessions = Object.keys(days).sort().reverse().slice(0, 5);
@@ -543,7 +550,7 @@ function workoutSummary(h, y, m) {
       ${machines.size ? `
         <h4>器材紀錄</h4>
         <ul class="pr-list">${[...machines].slice(0, 10).map(([name, r]) => `
-          <li><span>${esc(name)}</span><span class="muted-sm">最近 ${esc(exerciseText(r.last)) || '—'}${r.best ? ` · 最重 ${r.best} kg` : ''}</span></li>`).join('')}
+          <li><span>${esc(name)}</span><span class="muted-sm">最近 ${esc(exerciseText(r.last)) || '—'}${r.best ? ` · 最重 ${r.best.weight} ${UNIT_LABEL[r.best.unit]}` : ''}</span></li>`).join('')}
         </ul>` : ''}
       ${sessions.length ? `
         <h4>最近訓練</h4>
