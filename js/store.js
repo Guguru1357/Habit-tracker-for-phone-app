@@ -17,12 +17,14 @@ export function defaultState() {
   return {
     version: SCHEMA_VERSION,
     habits: [
-      { id: uid(), name: '重訓', emoji: '🏋️', color: '#ef4444', freq: { type: 'weekly', times: 3, days: [] }, createdAt: t },
-      { id: uid(), name: '鋼琴', emoji: '🎹', color: '#6366f1', freq: { type: 'daily', times: 1, days: [] }, createdAt: t },
-      { id: uid(), name: '日文', emoji: '🗾', color: '#ec4899', freq: { type: 'daily', times: 1, days: [] }, createdAt: t },
+      { id: uid(), name: '重訓', emoji: '🏋️', color: '#ef4444', freq: { type: 'weekly', times: 3, days: [] }, log: 'workout', createdAt: t },
+      { id: uid(), name: '鋼琴', emoji: '🎹', color: '#6366f1', freq: { type: 'daily', times: 1, days: [] }, log: 'none', createdAt: t },
+      { id: uid(), name: '日文', emoji: '🗾', color: '#ec4899', freq: { type: 'daily', times: 1, days: [] }, log: 'none', createdAt: t },
     ],
     // done[habitId][YYYY-MM-DD] = 1
     done: {},
+    // workouts[habitId][YYYY-MM-DD] = [{ id, part, machine, weight, sets, reps }]
+    workouts: {},
     settings: { theme: 'auto' },
   };
 }
@@ -43,7 +45,29 @@ function normalizeHabit(h) {
       times: Math.min(7, Math.max(1, Number(f.times) || 1)),
       days: Array.isArray(f.days) ? [...new Set(f.days.map(Number).filter((d) => d >= 0 && d <= 6))].sort() : [],
     },
+    // 舊資料沒有 log 欄位時，名稱含「重訓／健身」的習慣自動開啟訓練紀錄
+    log: h.log === 'workout' || (h.log === undefined && /重訓|健身/.test(h.name)) ? 'workout' : 'none',
     createdAt: DATE_RE.test(h.createdAt) ? h.createdAt : todayKey(),
+  };
+}
+
+const num = (v, max) => {
+  const n = Number(v);
+  return Number.isFinite(n) && n > 0 ? Math.min(n, max) : null;
+};
+
+export function normalizeExercise(e) {
+  if (!e || typeof e !== 'object') return null;
+  const part = String(e.part || '').trim().slice(0, 20);
+  const machine = String(e.machine || '').trim().slice(0, 40);
+  if (!part && !machine) return null;
+  return {
+    id: String(e.id || uid()),
+    part,
+    machine,
+    weight: num(e.weight, 9999),
+    sets: num(e.sets, 99) && Math.round(num(e.sets, 99)),
+    reps: num(e.reps, 999) && Math.round(num(e.reps, 999)),
   };
 }
 
@@ -60,11 +84,21 @@ export function normalizeState(raw) {
     done[hid] = {};
     for (const k of Object.keys(days)) if (DATE_RE.test(k) && days[k]) done[hid][k] = 1;
   }
+  const workouts = {};
+  for (const [hid, days] of Object.entries(raw.workouts || {})) {
+    if (!ids.has(hid) || !days || typeof days !== 'object') continue;
+    for (const [k, list] of Object.entries(days)) {
+      if (!DATE_RE.test(k) || !Array.isArray(list)) continue;
+      const clean = list.map(normalizeExercise).filter(Boolean);
+      if (clean.length) (workouts[hid] ||= {})[k] = clean;
+    }
+  }
   const theme = raw.settings?.theme;
   return {
     version: SCHEMA_VERSION,
     habits,
     done,
+    workouts,
     settings: { theme: ['auto', 'light', 'dark'].includes(theme) ? theme : 'auto' },
   };
 }

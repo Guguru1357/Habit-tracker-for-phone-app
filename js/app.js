@@ -2,7 +2,7 @@ import {
   todayKey, addDays, formatLong, weekday, weekStart, fromKey, monthRange, WEEKDAY_LABELS,
 } from './date.js';
 import {
-  load, save, uid, COLORS, exportJSON, importJSON, defaultState,
+  load, save, uid, COLORS, exportJSON, importJSON, defaultState, normalizeExercise,
 } from './store.js';
 import {
   isDone, isScheduled, weekCount, freqLabel, currentStreak, bestStreak, monthStats, streakUnit,
@@ -63,7 +63,7 @@ function habitCard(h, key, today) {
   let sub = freqLabel(h);
   if (h.freq.type === 'weekly') sub = `本週 ${weekCount(map, key)}/${h.freq.times} 次`;
   const streak = currentStreak(h, map, today);
-  return `
+  const card = `
     <button class="habit ${done ? 'done' : ''}" style="--c:${esc(h.color)}" data-toggle="${esc(h.id)}" aria-pressed="${done}">
       <span class="emoji">${esc(h.emoji)}</span>
       <span class="info">
@@ -74,6 +74,17 @@ function habitCard(h, key, today) {
         <svg viewBox="0 0 24 24"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
       </span>
     </button>`;
+  if (h.log !== 'workout') return card;
+  const list = state.workouts[h.id]?.[key] || [];
+  const parts = [...new Set(list.map((e) => e.part).filter(Boolean))].join('、');
+  return `
+    <div class="habit-group" style="--c:${esc(h.color)}">
+      ${card}
+      <button class="log-btn" data-log="${esc(h.id)}">
+        ${list.length ? `📋 ${list.length} 個動作${parts ? `（${esc(parts)}）` : ''}` : '＋ 記錄訓練內容'}
+        <span aria-hidden="true">›</span>
+      </button>
+    </div>`;
 }
 
 function renderToday() {
@@ -205,6 +216,7 @@ function renderStats() {
           <div><strong>${rate}</strong><span>${m + 1}月完成率 ${ms.expected ? `(${ms.done}/${ms.expected})` : ''}</span></div>
         </div>
         ${monthCalendar(h, y, m, today)}
+        ${h.log === 'workout' ? workoutSummary(h, y, m) : ''}
       </article>`;
   }).join('');
 
@@ -250,7 +262,7 @@ function openEditor(id) {
   const h = state.habits.find((x) => x.id === id);
   editing = h
     ? structuredClone(h)
-    : { id: '', name: '', emoji: '✅', color: COLORS[state.habits.length % COLORS.length], freq: { type: 'daily', times: 3, days: [1, 3, 5] }, createdAt: todayKey() };
+    : { id: '', name: '', emoji: '✅', color: COLORS[state.habits.length % COLORS.length], freq: { type: 'daily', times: 3, days: [1, 3, 5] }, log: 'none', createdAt: todayKey() };
   if (!editing.freq.days.length) editing.freq.days = [1, 3, 5];
   if (editing.freq.type !== 'weekly') editing.freq.times = editing.freq.times > 1 ? editing.freq.times : 3;
   drawEditor();
@@ -288,6 +300,10 @@ function drawEditor() {
       ${e.freq.type === 'days' ? `
         <div class="days">${order.map((d) => `<button type="button" data-wd="${d}" class="${e.freq.days.includes(d) ? 'sel' : ''}">${WEEKDAY_LABELS[d]}</button>`).join('')}</div>` : ''}
     </div>
+    <button type="button" class="switch-row" data-logtoggle aria-pressed="${e.log === 'workout'}">
+      <span><b>記錄訓練內容</b><small>打勾時可另外記下部位、器材、重量、次數、組數</small></span>
+      <span class="switch ${e.log === 'workout' ? 'on' : ''}"></span>
+    </button>
     <div class="dialog-actions">
       ${e.id ? '<button type="button" class="btn danger" data-delete>刪除</button>' : '<span></span>'}
       <span class="spacer"></span>
@@ -308,6 +324,7 @@ dialog.addEventListener('click', (ev) => {
   else if (t.dataset.color) e.color = t.dataset.color;
   else if (t.dataset.freq) e.freq.type = t.dataset.freq;
   else if (t.dataset.times) e.freq.times = Math.min(7, Math.max(1, e.freq.times + Number(t.dataset.times)));
+  else if ('logtoggle' in t.dataset) e.log = e.log === 'workout' ? 'none' : 'workout';
   else if (t.dataset.wd) {
     const d = Number(t.dataset.wd);
     e.freq.days = e.freq.days.includes(d) ? e.freq.days.filter((x) => x !== d) : [...e.freq.days, d].sort();
@@ -316,6 +333,7 @@ dialog.addEventListener('click', (ev) => {
     if (confirm(`確定要刪除「${e.name}」？所有打卡紀錄也會一併刪除。`)) {
       state.habits = state.habits.filter((h) => h.id !== e.id);
       delete state.done[e.id];
+      delete state.workouts[e.id];
       dialog.close();
       commit();
     }
@@ -342,6 +360,199 @@ $('#editor-form').addEventListener('submit', (ev) => {
   dialog.close();
   commit();
 });
+
+// ---------- 重訓紀錄 ----------
+const PARTS = ['胸', '背', '腿', '肩', '二頭', '三頭', '核心', '有氧'];
+const wkDialog = $('#workout');
+let wk = null; // { hid, date, editId, form }
+
+const emptyForm = (part = '') => ({ part, machine: '', weight: '', reps: '', sets: '' });
+const toForm = (e) => ({ part: e.part, machine: e.machine, weight: e.weight ?? '', reps: e.reps ?? '', sets: e.sets ?? '' });
+
+/** 某習慣的所有動作，新的在前：[[日期, 動作], …] */
+function allExercises(hid) {
+  const days = state.workouts[hid] || {};
+  return Object.keys(days).sort().reverse().flatMap((k) => days[k].map((e) => [k, e]).reverse());
+}
+
+function exerciseText(e) {
+  const bits = [];
+  if (e.weight) bits.push(`${e.weight} kg`);
+  if (e.reps) bits.push(`${e.reps} 下`);
+  if (e.sets) bits.push(`${e.sets} 組`);
+  return bits.join(' × ');
+}
+
+function openWorkout(hid, date) {
+  wk = { hid, date, editId: null, form: emptyForm() };
+  drawWorkout();
+  wkDialog.showModal();
+}
+
+function readWorkoutForm() {
+  for (const k of Object.keys(wk.form)) wk.form[k] = $(`#w-${k}`).value;
+}
+
+/** 選了器材時，帶入上次的重量／次數／組數 */
+function prefillFromLast(machine) {
+  const last = allExercises(wk.hid).find(([, e]) => e.machine === machine)?.[1];
+  if (!last) return;
+  const f = wk.form;
+  if (!f.part) f.part = last.part;
+  Object.assign(f, { weight: last.weight ?? '', reps: last.reps ?? '', sets: last.sets ?? '' });
+}
+
+function drawWorkout() {
+  const h = state.habits.find((x) => x.id === wk.hid);
+  const list = state.workouts[wk.hid]?.[wk.date] || [];
+  const f = wk.form;
+  const history = allExercises(wk.hid);
+  const parts = [...new Set([...PARTS, ...history.map(([, e]) => e.part).filter(Boolean)])];
+  const seen = new Set();
+  const recent = [];
+  for (const [, e] of history) {
+    if (!e.machine || seen.has(e.machine) || (f.part && e.part !== f.part)) continue;
+    seen.add(e.machine);
+    recent.push(e.machine);
+    if (recent.length >= 8) break;
+  }
+
+  $('#workout-form').innerHTML = `
+    <div>
+      <h2>${esc(h.emoji)} ${esc(h.name)}紀錄</h2>
+      <p class="muted">${formatLong(wk.date)}</p>
+    </div>
+    ${list.length ? `<ul class="ex-list">${list.map((e) => `
+      <li class="${e.id === wk.editId ? 'editing' : ''}">
+        <div class="ex-main">
+          <span class="ex-name">${esc(e.machine || e.part)}${e.part && e.machine ? `<span class="tag">${esc(e.part)}</span>` : ''}</span>
+          <span class="ex-sub">${esc(exerciseText(e)) || '—'}</span>
+        </div>
+        <button type="button" class="icon-btn sm" data-ex-edit="${esc(e.id)}" aria-label="編輯">✏️</button>
+        <button type="button" class="icon-btn sm" data-ex-del="${esc(e.id)}" aria-label="刪除">🗑️</button>
+      </li>`).join('')}</ul>` : '<p class="muted">還沒有紀錄，從下面新增第一個動作。</p>'}
+    <div class="ex-form">
+      <h3>${wk.editId ? '編輯動作' : '新增動作'}</h3>
+      <div class="field">部位
+        <div class="chips">${parts.map((p) => `<button type="button" data-part="${esc(p)}" class="${p === f.part ? 'sel' : ''}">${esc(p)}</button>`).join('')}</div>
+        <input id="w-part" value="${esc(f.part)}" placeholder="或自己輸入部位" maxlength="20" autocomplete="off">
+      </div>
+      <div class="field">器材 / 動作
+        ${recent.length ? `<div class="chips">${recent.map((m) => `<button type="button" data-machine="${esc(m)}" class="${m === f.machine ? 'sel' : ''}">${esc(m)}</button>`).join('')}</div>` : ''}
+        <input id="w-machine" value="${esc(f.machine)}" placeholder="例如：胸推機、深蹲架、啞鈴臥推" maxlength="40" autocomplete="off">
+      </div>
+      <div class="num-row">
+        <label class="field">重量 kg<input id="w-weight" type="number" inputmode="decimal" step="any" min="0" value="${esc(f.weight)}"></label>
+        <label class="field">次數<input id="w-reps" type="number" inputmode="numeric" min="0" value="${esc(f.reps)}"></label>
+        <label class="field">組數<input id="w-sets" type="number" inputmode="numeric" min="0" value="${esc(f.sets)}"></label>
+      </div>
+      <div class="dialog-actions">
+        ${wk.editId ? '<button type="button" class="btn" data-ex-cancel>取消編輯</button>' : ''}
+        <span class="spacer"></span>
+        <button type="submit" class="btn primary">${wk.editId ? '更新' : '＋ 新增動作'}</button>
+      </div>
+    </div>
+    <button type="button" class="btn block" data-wk-close>完成</button>
+  `;
+}
+
+wkDialog.addEventListener('click', (ev) => {
+  if (ev.target === wkDialog) { wkDialog.close(); return; }
+  const t = ev.target.closest('button');
+  if (!t) return;
+  const d = t.dataset;
+  readWorkoutForm();
+  const days = state.workouts[wk.hid] || {};
+  const list = days[wk.date] || [];
+
+  if (d.part !== undefined) wk.form.part = wk.form.part === d.part ? '' : d.part;
+  else if (d.machine !== undefined) {
+    wk.form.machine = d.machine;
+    prefillFromLast(d.machine);
+  } else if (d.exEdit) {
+    const e = list.find((x) => x.id === d.exEdit);
+    if (e) { wk.editId = e.id; wk.form = toForm(e); }
+  } else if (d.exDel) {
+    const e = list.find((x) => x.id === d.exDel);
+    if (!e || !confirm(`刪除「${e.machine || e.part}」？`)) return;
+    days[wk.date] = list.filter((x) => x.id !== d.exDel);
+    if (!days[wk.date].length) delete days[wk.date];
+    if (wk.editId === d.exDel) { wk.editId = null; wk.form = emptyForm(); }
+    commit();
+  } else if ('exCancel' in d) {
+    wk.editId = null;
+    wk.form = emptyForm(wk.form.part);
+  } else if ('wkClose' in d) {
+    wkDialog.close();
+    return;
+  } else return;
+  drawWorkout();
+});
+
+// 手動輸入器材名稱時，也帶入上次的數字（只在數字都還空著時）
+wkDialog.addEventListener('change', (ev) => {
+  if (ev.target.id !== 'w-machine') return;
+  readWorkoutForm();
+  const f = wk.form;
+  if (f.weight || f.reps || f.sets) return;
+  prefillFromLast(f.machine.trim());
+  // 直接填值、不重畫，避免使用者正在輸入的欄位失去焦點
+  for (const k of ['part', 'weight', 'reps', 'sets']) $(`#w-${k}`).value = f[k];
+});
+
+$('#workout-form').addEventListener('submit', (ev) => {
+  ev.preventDefault();
+  readWorkoutForm();
+  const e = normalizeExercise({ ...wk.form, id: wk.editId || uid() });
+  if (!e) { toast('請填寫部位或器材'); return; }
+  const list = ((state.workouts[wk.hid] ||= {})[wk.date] ||= []);
+  const i = list.findIndex((x) => x.id === e.id);
+  if (i >= 0) list[i] = e;
+  else list.push(e);
+  (state.done[wk.hid] ||= {})[wk.date] = 1; // 有訓練紀錄就自動打勾
+  toast(wk.editId ? '已更新' : `已新增：${e.machine || e.part}`);
+  wk.editId = null;
+  wk.form = emptyForm(e.part); // 保留部位，方便連續輸入同部位的動作
+  commit();
+  drawWorkout();
+});
+
+/** 統計頁：本月部位次數、各器材最佳／最近紀錄、最近幾次訓練 */
+function workoutSummary(h, y, m) {
+  const days = state.workouts[h.id] || {};
+  const prefix = `${y}-${String(m + 1).padStart(2, '0')}`;
+  const partCount = {};
+  for (const [k, list] of Object.entries(days)) {
+    if (!k.startsWith(prefix)) continue;
+    for (const p of new Set(list.map((e) => e.part).filter(Boolean))) partCount[p] = (partCount[p] || 0) + 1;
+  }
+  const machines = new Map(); // machine -> { last, lastDate, best }
+  for (const [k, e] of allExercises(h.id)) {
+    if (!e.machine) continue;
+    const r = machines.get(e.machine) || { last: e, lastDate: k, best: 0 };
+    r.best = Math.max(r.best, e.weight || 0);
+    machines.set(e.machine, r);
+  }
+  const sessions = Object.keys(days).sort().reverse().slice(0, 5);
+  const parts = Object.entries(partCount).sort((a, b) => b[1] - a[1]);
+
+  return `
+    <div class="wk-sum">
+      <h4>${m + 1}月訓練部位</h4>
+      ${parts.length ? `<div class="chips static">${parts.map(([p, n]) => `<span>${esc(p)} <b>${n}</b> 次</span>`).join('')}</div>` : '<p class="muted">這個月還沒有訓練紀錄</p>'}
+      ${machines.size ? `
+        <h4>器材紀錄</h4>
+        <ul class="pr-list">${[...machines].slice(0, 10).map(([name, r]) => `
+          <li><span>${esc(name)}</span><span class="muted-sm">最近 ${esc(exerciseText(r.last)) || '—'}${r.best ? ` · 最重 ${r.best} kg` : ''}</span></li>`).join('')}
+        </ul>` : ''}
+      ${sessions.length ? `
+        <h4>最近訓練</h4>
+        <div class="sessions">${sessions.map((k) => {
+          const ps = [...new Set(days[k].map((e) => e.part).filter(Boolean))].join('、');
+          return `<button data-wk-open="${k}" data-hid="${esc(h.id)}"><span>${formatLong(k)}</span><span class="muted-sm">${esc(ps)} · ${days[k].length} 個動作 ›</span></button>`;
+        }).join('')}</div>` : ''}
+    </div>`;
+}
 
 // ---------- 設定頁 ----------
 let deferredInstall = null;
@@ -422,6 +633,8 @@ main.addEventListener('click', async (ev) => {
   const d = t.dataset;
 
   if (d.toggle) toggle(d.toggle, ui.date);
+  else if (d.log) openWorkout(d.log, ui.date);
+  else if (d.wkOpen) openWorkout(d.hid, d.wkOpen);
   else if (d.cal) toggle(d.cal, d.key);
   else if (d.day) {
     const today = todayKey();
