@@ -65,8 +65,9 @@ export function normalizeExercise(e) {
     id: String(e.id || uid()),
     part,
     machine,
-    weight: num(e.weight, 9999),
-    unit: e.unit === 'lb' ? 'lb' : 'kg',
+    // unit：kg / lb；bw = 自重、bar = 空槓（這兩種不記重量）
+    weight: ['bw', 'bar'].includes(e.unit) ? null : num(e.weight, 9999),
+    unit: ['lb', 'bw', 'bar'].includes(e.unit) ? e.unit : 'kg',
     sets: num(e.sets, 99) && Math.round(num(e.sets, 99)),
     reps: num(e.reps, 999) && Math.round(num(e.reps, 999)),
   };

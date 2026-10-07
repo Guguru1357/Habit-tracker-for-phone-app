@@ -368,7 +368,8 @@ let wk = null; // { hid, date, editId, form }
 
 const emptyForm = (part = '') => ({ part, machine: '', weight: '', reps: '', sets: '', unit: state.settings.weightUnit });
 const toForm = (e) => ({ part: e.part, machine: e.machine, weight: e.weight ?? '', reps: e.reps ?? '', sets: e.sets ?? '', unit: e.unit });
-const UNIT_LABEL = { kg: 'kg', lb: 'lb' };
+const UNIT_LABEL = { kg: 'kg', lb: 'lb', bw: '自重', bar: '空槓' };
+const NO_WEIGHT = (u) => u === 'bw' || u === 'bar';
 const toKg = (e) => (e.weight || 0) * (e.unit === 'lb' ? 0.45359237 : 1);
 
 /** 某習慣的所有動作，新的在前：[[日期, 動作], …] */
@@ -379,7 +380,8 @@ function allExercises(hid) {
 
 function exerciseText(e) {
   const bits = [];
-  if (e.weight) bits.push(`${e.weight} ${UNIT_LABEL[e.unit]}`);
+  if (NO_WEIGHT(e.unit)) bits.push(UNIT_LABEL[e.unit]);
+  else if (e.weight) bits.push(`${e.weight} ${UNIT_LABEL[e.unit]}`);
   if (e.reps) bits.push(`${e.reps} 下`);
   if (e.sets) bits.push(`${e.sets} 組`);
   return bits.join(' × ');
@@ -443,8 +445,11 @@ function drawWorkout() {
         ${recent.length ? `<div class="chips">${recent.map((m) => `<button type="button" data-machine="${esc(m)}" class="${m === f.machine ? 'sel' : ''}">${esc(m)}</button>`).join('')}</div>` : ''}
         <input id="w-machine" value="${esc(f.machine)}" placeholder="例如：胸推機、深蹲架、啞鈴臥推" maxlength="40" autocomplete="off">
       </div>
+      <div class="field">重量單位
+        <div class="seg">${['kg', 'lb', 'bw', 'bar'].map((u) => `<button type="button" data-unit="${u}" class="${f.unit === u ? 'sel' : ''}">${UNIT_LABEL[u]}</button>`).join('')}</div>
+      </div>
       <div class="num-row">
-        <label class="field"><span class="unit-head">重量<span class="unit-seg">${['kg', 'lb'].map((u) => `<button type="button" data-unit="${u}" class="${f.unit === u ? 'sel' : ''}">${UNIT_LABEL[u]}</button>`).join('')}</span></span><input id="w-weight" type="number" inputmode="decimal" step="any" min="0" value="${esc(f.weight)}"></label>
+        <label class="field">重量${NO_WEIGHT(f.unit) ? '' : ` (${UNIT_LABEL[f.unit]})`}<input id="w-weight" type="number" inputmode="decimal" step="any" min="0" value="${NO_WEIGHT(f.unit) ? '' : esc(f.weight)}" ${NO_WEIGHT(f.unit) ? `disabled placeholder="${UNIT_LABEL[f.unit]}"` : ''}></label>
         <label class="field">次數<input id="w-reps" type="number" inputmode="numeric" min="0" value="${esc(f.reps)}"></label>
         <label class="field">組數<input id="w-sets" type="number" inputmode="numeric" min="0" value="${esc(f.sets)}"></label>
       </div>
@@ -476,7 +481,7 @@ wkDialog.addEventListener('click', (ev) => {
     if (e) { wk.editId = e.id; wk.form = toForm(e); }
   } else if (d.unit) {
     wk.form.unit = d.unit;
-    state.settings.weightUnit = d.unit; // 記住上次用的單位
+    if (!NO_WEIGHT(d.unit)) state.settings.weightUnit = d.unit; // 記住上次用的 kg / lb
     save(state);
   } else if (d.exDel) {
     const e = list.find((x) => x.id === d.exDel);
@@ -505,6 +510,10 @@ wkDialog.addEventListener('change', (ev) => {
   // 直接填值、不重畫，避免使用者正在輸入的欄位失去焦點
   for (const k of ['part', 'weight', 'reps', 'sets']) $(`#w-${k}`).value = f[k];
   document.querySelectorAll('[data-unit]').forEach((btn) => btn.classList.toggle('sel', btn.dataset.unit === f.unit));
+  const w = $('#w-weight');
+  w.disabled = NO_WEIGHT(f.unit);
+  w.placeholder = w.disabled ? UNIT_LABEL[f.unit] : '';
+  if (w.disabled) w.value = '';
 });
 
 $('#workout-form').addEventListener('submit', (ev) => {

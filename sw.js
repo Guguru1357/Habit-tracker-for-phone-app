@@ -1,6 +1,6 @@
 // Service Worker：快取 App 本體，讓 App 可以離線使用。
 // ⚠️ 每次修改任何檔案後，請把 VERSION 加一，使用者才會拿到新版。
-const VERSION = 'v3';
+const VERSION = 'v4';
 const CACHE = `habit-tracker-${VERSION}`;
 const ASSETS = [
   './',
