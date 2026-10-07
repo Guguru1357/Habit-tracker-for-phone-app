@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>習慣追蹤</title>
+  <meta name="description" content="離線可用的個人習慣追蹤 App">
+  <meta name="theme-color" content="#f6f7f9">
+  <meta name="color-scheme" content="light dark">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="習慣">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <main id="main" class="container"></main>
+
+  <nav class="tabbar">
+    <a href="#today" data-view="today"><span>✅</span>今日</a>
+    <a href="#stats" data-view="stats"><span>📊</span>統計</a>
+    <a href="#habits" data-view="habits"><span>📝</span>習慣</a>
+    <a href="#settings" data-view="settings"><span>⚙️</span>設定</a>
+  </nav>
+
+  <dialog id="editor">
+    <form id="editor-form" method="dialog"></form>
+  </dialog>
+
+  <div id="toast" role="status" aria-live="polite"></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>
